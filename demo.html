@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pix Editor 2API Demo</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171c24; --panel2: #1e252f; --border: #2a323e;
+    --text: #e6e9ef; --muted: #8b94a3; --accent: #5aa2ff; --ok: #3fb96f; --err: #e05656;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, "Segoe UI", sans-serif; padding: 24px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; margin-bottom: 12px; color: var(--accent); }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  select, input, textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+  textarea { min-height: 72px; resize: vertical; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 12px; }
+  button:disabled { opacity: .5; cursor: wait; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  .imgbox { min-height: 320px; display: flex; align-items: center; justify-content: center; background: var(--panel2); border-radius: 8px; overflow: hidden; }
+  .imgbox img { max-width: 100%; max-height: 480px; }
+  .imgbox video { max-width: 100%; max-height: 480px; }
+  .placeholder { color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 10px; word-break: break-all; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; font-size: 12px; }
+  .stats div { background: var(--panel2); border-radius: 6px; padding: 8px; text-align: center; }
+  .stats b { display: block; font-size: 16px; color: var(--accent); }
+  .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err { color: var(--err); }
+  .ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pix Editor 2API</h1>
+  <div class="sub">com.snaptune.ai.photoeditor.collagemaker · Apero workflow · 网关 127.0.0.1:18733</div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h2>生成参数</h2>
+        <label>模型</label>
+        <select id="model">
+          <option value="pix-editor-cheap">pix-editor-cheap（qwen 快速 ~15s）</option>
+          <option value="pix-editor-expensive">pix-editor-expensive（qwen 精细 ~90s）</option>
+          <option value="pix-editor-i2v">pix-editor-i2v（图生视频 ~150s）</option>
+        </select>
+        <label>Prompt</label>
+        <textarea id="prompt">turn the background into a starry night sky over snowy mountains</textarea>
+        <label>图片（可选，留空用内置测试图）</label>
+        <input type="file" id="image" accept="image/*">
+        <label>视频模型（仅 i2v）</label>
+        <select id="video_model">
+          <option value="seedance-lite">seedance-lite</option>
+          <option value="seedance-pro">seedance-pro</option>
+          <option value="inhouse">inhouse</option>
+        </select>
+        <button id="go">生成</button>
+        <div id="status" class="meta"></div>
+      </div>
+
+      <div class="panel">
+        <h2>网关状态</h2>
+        <div class="stats" id="stats">加载中…</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>结果</h2>
+        <div class="imgbox" id="imgbox"><div class="placeholder">输入参数后点击「生成」</div></div>
+        <div class="meta" id="meta"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function refreshStats() {
+  try {
+    const r = await fetch('/health');
+    const j = await r.json();
+    const s = j.stats;
+    $('stats').innerHTML = `
+      <div><b>${s.total}</b>总请求</div>
+      <div><b>${s.ok}</b>成功</div>
+      <div><b>${s.err}</b>失败</div>
+      <div><b>${s.in_flight}</b>进行中</div>`;
+  } catch (e) {
+    $('stats').innerHTML = '<div class="err">网关未启动</div>';
+  }
+}
+setInterval(refreshStats, 5000);
+refreshStats();
+
+$('go').onclick = async () => {
+  const btn = $('go');
+  btn.disabled = true;
+  $('imgbox').innerHTML = '<div class="spinner"></div>';
+  $('status').textContent = '提交中…';
+  $('meta').textContent = '';
+  const model = $('model').value;
+  const body = { prompt: $('prompt').value, model, video_model: $('video_model').value };
+  const f = $('image').files[0];
+  if (f) {
+    const buf = await f.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    body.image = 'data:image/' + (f.type || 'jpeg') + ';base64,' + btoa(bin);
+  }
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/v1/images/generations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    const dt = ((performance.now() - t0) / 1000).toFixed(1);
+    if (r.ok && j.data && j.data[0] && j.data[0].url) {
+      const url = j.data[0].url;
+      $('status').innerHTML = `<span class="ok">成功 · ${dt}s · runId ${j.upstream.runId.slice(0, 8)}…</span>`;
+      $('meta').textContent = url;
+      if (model.includes('i2v')) {
+        $('imgbox').innerHTML = `<video src="${url}" controls autoplay loop></video>`;
+      } else {
+        $('imgbox').innerHTML = `<img src="${url}" alt="result">`;
+      }
+    } else {
+      const msg = (j.error && j.error.message) || JSON.stringify(j).slice(0, 200);
+      $('status').innerHTML = `<span class="err">失败(${r.status}) · ${dt}s</span>`;
+      $('imgbox').innerHTML = `<div class="placeholder err">${msg}</div>`;
+    }
+  } catch (e) {
+    $('status').innerHTML = '<span class="err">网络错误</span>';
+    $('imgbox').innerHTML = `<div class="placeholder err">${e.message}</div>`;
+  }
+  refreshStats();
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>

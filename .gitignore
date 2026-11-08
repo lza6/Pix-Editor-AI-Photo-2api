@@ -1,0 +1,7 @@
+__pycache__/
+*.log
+server*.log
+evidence_gateway.jpeg
+demo_e2e.png
+apikey.local
+data/
